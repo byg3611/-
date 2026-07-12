@@ -1,0 +1,91 @@
+import numpy as np
+
+# 1. 시뮬레이션 환경 및 성능 평가(ITAE) 함수 정의
+def evaluate_pid(Kp, Ki, Kd):
+    # 물리 변수 설정 (기존 코드와 동일)
+    mass = 1.0
+    gravity = 9.8
+    dt = 0.05
+    total_time = 20.0
+    target_altitude = 10.0
+    
+    current_altitude = 0.0
+    velocity = 0.0
+    integral_error = 0.0
+    prev_error = 0.0
+    
+    itae_score = 0.0  # ITAE 점수 (낮을수록 좋음)
+    
+    # 20초 동안 시뮬레이션 진행 (GUI 없이 내부 연산만 수행)
+    for step in range(int(total_time / dt)):
+        current_time = step * dt
+        
+        # 10초에 강풍(외란) 발생
+        if abs(current_time - 10.0) < dt:
+            current_altitude -= 5.0
+            
+        # PID 오차 계산
+        error = target_altitude - current_altitude
+        integral_error += error * dt
+        derivative_error = (error - prev_error) / dt
+        
+        # 제어 입력 (모터 추력) 계산
+        control_output = (Kp * error) + (Ki * integral_error) + (Kd * derivative_error)
+        
+        # 뉴턴의 운동 법칙 적용 (F = ma)
+        # 모터가 위로 미는 힘(control_output) - 중력
+        net_force = control_output - (mass * gravity)
+        acceleration = net_force / mass
+        
+        velocity += acceleration * dt
+        current_altitude += velocity * dt
+        
+        # 바닥 뚫고 들어가지 않게 처리
+        if current_altitude < 0:
+            current_altitude = 0
+            velocity = 0
+            
+        prev_error = error
+        
+        # ITAE 누적 계산 (핵심 성능 지표)
+        itae_score += current_time * abs(error) * dt
+        
+        # 만약 발산해서 고도가 너무 비정상적으로 높아지면 페널티 부여 후 종료
+        if current_altitude > 50 or current_altitude < -10:
+            return float('inf')
+            
+    return itae_score
+
+# 2. 최적화 루프 (Random Search Algorithm)
+def auto_tune():
+    print("🚀 PID 자동 튜닝을 시작합니다. (1000번의 시뮬레이션 진행 중...)")
+    
+    best_itae = float('inf')
+    best_Kp, best_Ki, best_Kd = 0, 0, 0
+    
+    iterations = 1000 # 탐색 횟수
+    
+    for i in range(iterations):
+        # 탐색 범위 무작위 설정 (사용자가 적절히 조절 가능)
+        Kp_test = np.random.uniform(0.5, 5.0)
+        Ki_test = np.random.uniform(0.1, 2.0)
+        Kd_test = np.random.uniform(1.0, 5.0)
+        
+        score = evaluate_pid(Kp_test, Ki_test, Kd_test)
+        
+        # 기존 최저 점수보다 낮으면(더 우수하면) 기록 갱신
+        if score < best_itae:
+            best_itae = score
+            best_Kp, best_Ki, best_Kd = Kp_test, Ki_test, Kd_test
+            
+    print("-" * 40)
+    print("✨ 최적화 완료! ✨")
+    print(f"가장 낮은 ITAE 점수: {best_itae:.2f}")
+    print(f"추천 PID 게인:")
+    print(f"Kp = {best_Kp:.3f}")
+    print(f"Ki = {best_Ki:.3f}")
+    print(f"Kd = {best_Kd:.3f}")
+
+# 실행부
+if __name__ == "__main__":
+    auto_tune()
