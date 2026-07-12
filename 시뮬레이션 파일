@@ -1,0 +1,175 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.widgets import Slider, Button
+
+# --- 1. [심화] 센서 노이즈 필터 클래스 (디지털 신호 처리) ---
+class MovingAverageFilter:
+    def __init__(self, window_size=5):
+        self.window_size = window_size
+        self.data = []
+        
+    def update(self, new_value):
+        self.data.append(new_value)
+        if len(self.data) > self.window_size:
+            self.data.pop(0)
+        return sum(self.data) / len(self.data)
+
+# --- 2. 시뮬레이션 함수 정의 ---
+def run_simulation(Kp, Ki, Kd, wind_active=False, noise_active=False):
+    target_altitude = 10.0
+    dt = 0.1
+    time_limit = 20.0
+    
+    drone_mass = 1.0
+    gravity = 9.8
+    current_altitude = 0.0
+    velocity = 0.0
+    
+    integral = 0
+    prev_error = 0
+    
+    time_data = []
+    altitude_data = []
+    
+    ma_filter = MovingAverageFilter(window_size=3) # 필터 객체 생성
+    
+    current_time = 0.0
+    while current_time <= time_limit:
+        # [외란 추가] 10초일 때 갑자기 드론을 밑으로 5m 강하하게 만듦
+        if wind_active and abs(current_time - 10.0) < 0.05:
+            current_altitude -= 5.0  
+            
+        time_data.append(current_time)
+        altitude_data.append(current_altitude)
+        
+        # [심화] 센서 데이터 읽기 및 노이즈 추가
+        measured_altitude = current_altitude
+        if noise_active:
+            measured_altitude += np.random.normal(0, 0.8) # 가우시안 화이트 노이즈 추가
+            
+        # [심화] 필터 적용
+        filtered_altitude = ma_filter.update(measured_altitude)
+        
+        # PID 오차 계산 (이제 필터링된 센서 값을 기준으로 계산합니다)
+        error = target_altitude - filtered_altitude
+        p_term = Kp * error
+        integral += error * dt
+        i_term = Ki * integral
+        d_term = Kd * (error - prev_error) / dt
+        prev_error = error
+        
+        thrust = p_term + i_term + d_term
+        
+        # 물리 법칙 적용 (F = ma)
+        net_force = thrust - (drone_mass * gravity)
+        acceleration = net_force / drone_mass
+        velocity += acceleration * dt
+        current_altitude += velocity * dt
+        
+        # 땅 밑으로 파고들지 않도록 제한
+        if current_altitude < 0:
+            current_altitude = 0
+            velocity = 0
+            
+        current_time += dt
+        
+    return time_data, altitude_data
+
+# --- 3. [심화] 자동 튜닝 알고리즘 (ITAE 성능 지표 기반) ---
+def evaluate_itae(Kp, Ki, Kd):
+    # 바람 부는 환경을 기준으로 시뮬레이션하여 ITAE 점수 계산
+    t_data, a_data = run_simulation(Kp, Ki, Kd, wind_active=True, noise_active=False)
+    itae = 0
+    for t, a in zip(t_data, a_data):
+        error = abs(10.0 - a)
+        itae += t * error * 0.1 # 시간(t) 가중치를 둔 적분 오차
+    return itae
+
+def auto_tune_pid(event):
+    print("🚀 자동 튜닝을 시작합니다... (500회 탐색 중)")
+    best_itae = float('inf')
+    best_Kp, best_Ki, best_Kd = slider_kp.val, slider_ki.val, slider_kd.val
+    
+    # 500번의 무작위 탐색 (Random Search)
+    for _ in range(500):
+        kp_test = np.random.uniform(1.0, 5.0)
+        ki_test = np.random.uniform(0.1, 1.5)
+        kd_test = np.random.uniform(1.0, 5.0)
+        
+        score = evaluate_itae(kp_test, ki_test, kd_test)
+        if score < best_itae:
+            best_itae = score
+            best_Kp, best_Ki, best_Kd = kp_test, ki_test, kd_test
+            
+    print(f"✨ 튜닝 완료! 최적 점수(ITAE): {best_itae:.2f}")
+    # 찾은 최적값을 슬라이더에 자동 적용
+    slider_kp.set_val(best_Kp)
+    slider_ki.set_val(best_Ki)
+    slider_kd.set_val(best_Kd)
+
+# --- 4. 그래프 및 UI 화면 초기 설정 ---
+fig, ax = plt.subplots(figsize=(10, 6))
+plt.subplots_adjust(bottom=0.35) 
+
+init_Kp, init_Ki, init_Kd = 2.0, 0.0, 1.0
+t_data, a_data = run_simulation(init_Kp, init_Ki, init_Kd)
+line, = ax.plot(t_data, a_data, label='Drone Altitude', color='blue', linewidth=2)
+ax.axhline(10, color='red', linestyle='--', label='Target (10m)')
+ax.set_xlim(0, 20)
+ax.set_ylim(0, 20)
+ax.set_xlabel('Time (s)')
+ax.set_ylabel('Altitude (m)')
+ax.set_title('Advanced PID Control & Auto-Tuner')
+ax.legend()
+ax.grid(True)
+
+# --- 5. 슬라이더(UI) 만들기 ---
+ax_kp = plt.axes([0.15, 0.2, 0.65, 0.03])
+ax_ki = plt.axes([0.15, 0.15, 0.65, 0.03])
+ax_kd = plt.axes([0.15, 0.10, 0.65, 0.03])
+
+slider_kp = Slider(ax_kp, 'Kp (Proportional)', 0.1, 10.0, valinit=init_Kp)
+slider_ki = Slider(ax_ki, 'Ki (Integral)', 0.0, 2.0, valinit=init_Ki)
+slider_kd = Slider(ax_kd, 'Kd (Derivative)', 0.0, 5.0, valinit=init_Kd)
+
+# 상태 저장을 위한 변수 (버튼 토글용)
+state = {'wind': False, 'noise': False}
+
+def update(val=None):
+    t, a = run_simulation(slider_kp.val, slider_ki.val, slider_kd.val, 
+                          wind_active=state['wind'], noise_active=state['noise'])
+    line.set_ydata(a)
+    fig.canvas.draw_idle()
+
+slider_kp.on_changed(update)
+slider_ki.on_changed(update)
+slider_kd.on_changed(update)
+
+# --- 6. 하단 버튼들 만들기 (Wind, Noise, Auto Tune) ---
+ax_btn_wind = plt.axes([0.2, 0.025, 0.15, 0.04])
+btn_wind = Button(ax_btn_wind, 'Wind: OFF', hovercolor='0.9')
+
+ax_btn_noise = plt.axes([0.4, 0.025, 0.15, 0.04])
+btn_noise = Button(ax_btn_noise, 'Noise: OFF', hovercolor='0.9')
+
+ax_btn_auto = plt.axes([0.65, 0.025, 0.2, 0.04])
+btn_auto = Button(ax_btn_auto, '🚀 Auto Tune PID', color='lightblue', hovercolor='0.8')
+
+def toggle_wind(event):
+    state['wind'] = not state['wind']
+    btn_wind.label.set_text('Wind: ON' if state['wind'] else 'Wind: OFF')
+    btn_wind.color = 'salmon' if state['wind'] else '0.85'
+    update()
+
+def toggle_noise(event):
+    state['noise'] = not state['noise']
+    btn_noise.label.set_text('Noise: ON' if state['noise'] else 'Noise: OFF')
+    btn_noise.color = 'gold' if state['noise'] else '0.85'
+    update()
+
+btn_wind.on_clicked(toggle_wind)
+btn_noise.on_clicked(toggle_noise)
+btn_auto.on_clicked(auto_tune_pid)
+
+# --- 7. 창 띄우기 ---
+plt.show()
